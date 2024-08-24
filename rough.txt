@@ -1,0 +1,285 @@
+Math behind Softmax Calculation
+
+•	Logits: Shape (2, 3, 4) (2 batches, 3 tokens, 4 vocabulary classes)
+•	Targets: Shape (2, 3) (2 batches, 3 tokens)
+
+Logits Tensor:
+logits = torch.tensor([
+    [[1.0, 2.0, 0.1, 0.3],  # Batch 1, Token 1
+     [0.5, 1.2, 2.1, 0.7],  # Batch 1, Token 2
+     [0.3, 0.6, 1.8, 2.4]], # Batch 1, Token 3
+
+    [[0.2, 1.5, 2.2, 0.8],  # Batch 2, Token 1
+     [0.6, 0.9, 1.0, 2.0],  # Batch 2, Token 2
+     [0.5, 1.0, 2.3, 1.7]]  # Batch 2, Token 3
+])
+
+Targets Tensor:
+targets = torch.tensor([
+    [1, 2, 3],  # Batch 1: True classes
+    [2, 1, 0]   # Batch 2: True classes
+])
+
+Reshaping and Loss Calculation
+1.	Reshape Tensors:
+•	Logits Reshape: From (2, 3, 4) to (6, 4):
+
+logits.view(-1, logits.size(-1))
+[[1.0, 2.0, 0.1, 0.3],  # Batch 1, Token 1
+ [0.5, 1.2, 2.1, 0.7],  # Batch 1, Token 2
+ [0.3, 0.6, 1.8, 2.4],  # Batch 1, Token 3
+ [0.2, 1.5, 2.2, 0.8],  # Batch 2, Token 1
+ [0.6, 0.9, 1.0, 2.0],  # Batch 2, Token 2
+ [0.5, 1.0, 2.3, 1.7]]  # Batch 2, Token 3
+
+• Targets Reshape: From (2, 3) to (6,):
+targets.view(-1)
+Resulting Targets:
+[1, 2, 3, 2, 1, 0]  # True class indices for each token in the batch
+
+2.	Compute Softmax Probabilities:
+Compute softmax probabilities for each token in each batch:
+Batch 1 Token 1 Logits: [1.0, 2.0, 0.1, 0.3]
+Softmax Calculation:
+max(x) = 2.0
+exp(x - max(x)) = [exp(1.0 - 2.0), exp(2.0 - 2.0), exp(0.1 - 2.0), exp(0.3 - 2.0)]
+= [exp(-1.0), exp(0.0), exp(-1.9), exp(-1.7)]
+softmax(x) = [exp(-1.0), exp(0.0), exp(-1.9), exp(-1.7)] / exp(-1.0)+exp(0.0)+exp(-1.9)+exp(-1.7)
+= [0.3679, 1.0, 0.1496, 0.1827]/0.3679 + 1.0 + 0.1496 + 0.1827
+= [0.2900, 0.7866, 0.1061, 0.1273]
+•	Maximum Probability: 0.7866
+•	Most Likely Class (Index of Maximum Probability): 1
+
+Similarly for all the Batch Tokens
+
+
+At the end it will be like
+logits.view(-1, logits.size(-1))
+= log_probs = torch.tensor([
+    [0.2900, 0.7866, 0.1061, 0.1273],
+    [-0.9000, -1.2000, -0.5000, -0.1000],
+    [-0.7000, -0.8000, -0.6000, -1.2000],
+    [-0.8000, -0.5000, -1.0000, -0.6000],
+    [-0.9000, -0.6000, -1.2000, -0.5000],
+    [-0.2000, -0.8000, -1.0000, -0.6000]
+])
+targets.view(-1)
+=[1, 2, 3, 2, 1, 0] 
+Select log probabilities
+selected_log_probs = torch.tensor([-1.1500,-0.5000,-1.2000,-1.0000,-0.6000,-0.2000])
+•Calculate Loss:
+loss = -selected_log_probs.mean()  # Average over all selected log-probabilities
+This value represents the average cross-entropy loss for the batch.
+
+
+
+# ---------------------------------------------------------------------------------------------------------- #
+
+At initialization we expect our model give every arbitary token uniform Probability so the loss should be -ln(1/50,257) = 10.82..
+
+
+# ---------------------------------------------------------------------------------------------------------- #
+
+self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+If we don’t share the weights between the input embedding (wte) and the output projection (lm_head), then the model would learn two separate sets of parameters:
+
+	1.	Input Embedding (wte): This layer converts input tokens into embedding vectors, mapping each token in the vocabulary to a unique vector. It learns a matrix of shape (vocab_size, embedding_dim).
+	2.	Output Projection (lm_head): This layer converts the final hidden states back into logits over the vocabulary. It typically has weights of shape (embedding_dim, vocab_size).
+
+What Happens When We Don’t Share Weights?
+
+If we don’t tie these weights:
+
+	•	The input embedding layer (wte) will learn one set of weights to map tokens to embedding vectors.
+	•	The output projection layer (lm_head) will learn a different set of weights to project hidden states back into the vocabulary space.
+
+The consequence of this is that the model learns separate representations for the input embeddings and the output logits, which can:
+
+	1.	Increase Parameter Count: You’re training two independent matrices, which increases the number of parameters in the model.
+	2.	Potentially Reduce Consistency: Since the input and output layers are trained independently, the model might learn slightly different mappings, leading to inconsistencies between how tokens are represented in the input space versus the output space.
+	3.	More Flexibility: One benefit of not sharing weights is that the input and output layers have more flexibility to learn different transformations. However, in practice, shared weights often perform better because of the consistency they provide.
+
+What Does Weight Sharing Achieve?
+
+When we do share the weights, the model learns a single weight matrix that is used for both:
+
+	•	Mapping tokens to embeddings (input).
+	•	Projecting hidden states to logits (output).
+
+This leads to:
+
+	1.	Fewer Parameters: Since the same matrix is used for both purposes, the model is more parameter-efficient.
+	2.	Improved Generalization: The model is forced to learn embeddings that work well for both input and output, leading to better generalization.
+	3.	Consistency: Since the same weights are used, there’s a direct correspondence between the input embeddings and output logits, which can be beneficial when the model is decoding.
+
+Summary
+
+	•	Without weight sharing: The model learns separate weight matrices for input embeddings and output projection, which increases parameter count and can introduce inconsistencies.
+	•	With weight sharing: The model learns a single, consistent set of weights used for both input and output, improving parameter efficiency and consistency across the model.
+
+This is why weight sharing is commonly used in transformer models like GPT.
+
+
+# ---------------------------------------------------------------------------------------------------------- #
+Pytorch defaults scale in the layer norm to be 1 and offset in the layer norm to be 0 
+
+In Layer Normalization, the terms scale and offset refer to learnable parameters that help adjust the normalized outputs.
+
+Background on Layer Normalization
+
+Layer Normalization normalizes the inputs across the features (dimensions) for each individual example in a batch, rather than across the batch. Mathematically, for an input feature vector  x  (let’s say it has  d  dimensions), Layer Normalization computes:
+
+
+\hat{x} = \frac{x - \mu}{\sigma}
+
+
+Where:
+
+	•	 \mu  is the mean of the elements in  x .
+	•	 \sigma  is the standard deviation of the elements in  x .
+
+This normalization step ensures that the output has a mean of 0 and a variance of 1. However, in many cases, having outputs strictly normalized might limit the model’s expressiveness.
+
+Role of Scale and Offset
+
+To allow the model to learn more flexible representations, Layer Normalization introduces two learnable parameters:
+
+	1.	Scale (often denoted as  \gamma ): This parameter scales the normalized output.
+	2.	Offset (often denoted as  \beta ): This parameter shifts the normalized output.
+
+The final output of Layer Normalization is:
+
+
+y = \gamma \hat{x} + \beta
+
+
+Where:
+
+	•	 \gamma  (scale) and  \beta  (offset) are learnable parameters of the same shape as the input dimension (e.g., the feature size).
+	•	 \hat{x}  is the normalized input.
+
+Why Are Scale and Offset Important?
+
+Without  \gamma  and  \beta , the output of Layer Normalization would always have a fixed distribution (mean of 0 and variance of 1). This restriction might not be ideal for all learning tasks. The scale and offset parameters allow the network to adjust the normalized output, effectively restoring some capacity for the layer to learn different distributions.
+
+For example:
+
+	•	If  \gamma = 1  and  \beta = 0 , the output remains unchanged as a standard normalized output.
+	•	If  \gamma > 1 , the normalized output is amplified.
+	•	If  \beta \neq 0 , the mean of the normalized output is shifted.
+
+In practice, the model learns the appropriate values for  \gamma  and  \beta  during training.
+
+Example in PyTorch
+
+In PyTorch’s implementation of nn.LayerNorm, the scale ( \gamma ) and offset ( \beta ) are automatically handled if elementwise_affine=True (the default setting). This allows the layer to have learnable parameters:
+
+layer_norm = nn.LayerNorm(normalized_shape=feature_size)
+Summary
+
+•	Scale ( \gamma ): Multiplies the normalized output, controlling the spread (variance).
+•	Offset ( \beta ): Shifts the normalized output, controlling the mean.
+•	These parameters allow Layer Normalization to be more flexible, enhancing the model’s ability to learn complex patterns.
+
+# ---------------------------------------------------------------------------------------------------------- #
+
+Why Is Xavier Initialization Needed?
+
+In deep networks, as data passes through many layers, the output can either explode or vanish if the weights are not initialized properly. Xavier initialization helps mitigate this issue by maintaining a balance in the flow of gradients during backpropagation.
+
+How Does Xavier Initialization Work?
+
+Xavier initialization sets the initial weights based on the number of input and output neurons in a layer. The weights are drawn from a distribution that takes into account the size of the network.
+
+There are two common ways to apply Xavier initialization:
+
+	1.	For a uniform distribution:
+
+
+W ~ U(-1/n**-0.5, 1/n**-0.5)
+
+Where  W  is the weight,  n  is the number of input neurons in the layer, and  U  is the uniform distribution.
+	2.	For a normal distribution:
+
+W ~ N(0, 1/n**-0.5)
+
+Where N is the normal distribution with a mean of 0 and standard deviation of  1/n**0.5 .
+
+When to Use Xavier Initialization
+
+Xavier initialization works well with activation functions that are linear or symmetrical, like the sigmoid and hyperbolic tangent (tanh) functions. However, for activation functions like ReLU, a variant called He initialization is often preferred.
+
+--> In gpt2 the standard deviation 0.02 maintains the Xavier intitalization of 1/n**0.5 example (1/768**-0.5), (1/1600**-0.5) etc. all are nearby 0.02
+
+--> In gpt2 a modified initialization which accounts for the accumulation on the residual path with model depth is used. They scale the resuidual layers or skip connections at initialization
+    by 1/n**-0.5
+
+
+# ---------------------------------------------------------------------------------------------------------- #
+
+
+Why attention is divided by C**-05
+
+In self-attention, you compute the attention scores by taking the dot product of the query (Q) and key (K) matrices:
+
+
+attention_score = Q . K^T
+
+
+This gives you the “affinities” or the relevance between each query and each key. The result is typically a matrix of shape  (B, T, T)  where:
+
+	•	 B  is the batch size.
+	•	 T  is the sequence length (number of tokens).
+	•	Each value in this matrix represents how much attention a token should pay to another token in the sequence.
+
+Problem: Large Dot-Product Values
+
+If the embedding dimension  C  is large, the dot-product  Q \cdot K^T  can produce very large values. For example, if the embedding dimension is 512, the dot products can be large enough that, when passed through the softmax function, they cause the softmax output to become extremely “peaky.” This would lead to the model focusing too much on a few tokens, while ignoring others, which can be detrimental during training.
+
+Solution: Scaling by  C^0.5 
+
+To counteract this issue, the dot-product values are scaled down by dividing by  C^0.5 , where  C  is the embedding dimension. The formula becomes:
+
+
+attention_score = Q . K^T/C**0.5
+
+
+This scaling makes sure that the variance of the attention scores remains more stable, especially as  C  (the embedding dimension) increases.
+
+Intuition Behind  C^0.5 
+
+	•	When you compute the dot product of two random vectors, the expected magnitude of the result grows with the dimensionality of the vectors. Specifically, it grows proportionally to  \sqrt{C} . Dividing by  \sqrt{C}  normalizes this growth, keeping the scale of the dot products more consistent regardless of the embedding dimension.
+
+Final Step: Softmax
+
+After scaling, the attention scores are passed through a softmax function to get a probability distribution over all tokens:
+
+
+\text{attention\_weights} = \text{softmax}\left(\frac{Q \cdot K^T}{\sqrt{C}}\right)
+
+
+This ensures that the attention is distributed more evenly, preventing overly sharp peaks in the attention distribution.
+
+Summary
+
+	•	The division by  C^0.5  normalizes the dot products to prevent large values, ensuring that the softmax function operates effectively.
+	•	This scaling is crucial for maintaining stable gradients during training, especially as the embedding dimension grows larger.
+
+
+# ---------------------------------------------------------------------------------------------------------- #
+
+What is Global Norm Clipping?
+
+When training a model using backpropagation, the gradients of the loss function with respect to the model parameters are calculated. If these gradients become too large, they can cause the model parameters to update too drastically, leading to instability or even divergence in training.
+
+Global norm clipping addresses this by scaling the gradients down whenever their total norm exceeds a specified threshold. Instead of clipping each gradient individually, it considers the norm of all the gradients together (the “global norm”).
+
+Why Clip the Global Norm?
+
+	1.	Preventing Exploding Gradients:
+During training, especially in deep networks or when using techniques like backpropagation through time (BPTT) in RNNs, gradients can grow exponentially. Clipping the global norm prevents this from happening, ensuring more stable and smoother updates.
+	2.	Stabilizing Training:
+Large gradients can lead to erratic parameter updates, causing the loss to fluctuate wildly or even diverge. Global norm clipping stabilizes training by keeping the updates within a reasonable range.
+	3.	Maintaining Balanced Updates:
+Unlike per-gradient clipping (where each gradient is clipped individually), global norm clipping scales all gradients together, maintaining their relative proportions. This helps in avoiding biases toward certain parameters or layers during training.
